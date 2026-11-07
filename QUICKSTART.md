@@ -123,7 +123,7 @@ bash scripts/logs.sh tail 50
 
 ### Port already in use
 ```bash
-lsof -i :8080
+lsof -i :18789
 # Kill if not openclaw-gateway, then retry deploy.sh up
 ```
 
@@ -158,7 +158,7 @@ bash scripts/deploy.sh up
 ✅ **Non-root**: Container runs as UID 1000 (no privilege escalation)  
 ✅ **No privileged mode**: Standard capabilities only  
 ✅ **No Docker socket**: Cannot access Docker daemon  
-✅ **Localhost-only**: Gateway at 127.0.0.1:8080 only  
+✅ **Localhost-only**: Gateway at 127.0.0.1:18789 only  
 ✅ **Chat-only pilot**: No file access, no external tools  
 ✅ **Secrets protected**: .env.local is git-ignored  
 ✅ **Persistent state**: Survives restarts and reboots  

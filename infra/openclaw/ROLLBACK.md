@@ -68,7 +68,7 @@ bash scripts/health-check.sh
 bash scripts/deploy.sh down
 
 # Pull latest image
-docker pull ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:v0.2.1
+docker pull openclaw/openclaw:2026.11.1
 
 # Verify image
 docker images | grep openclaw
@@ -207,7 +207,7 @@ bash scripts/health-check.sh
 docker compose config | grep image
 
 # Manually pull the image first
-docker pull ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:v0.2.1
+docker pull openclaw/openclaw:2026.11.1
 ```
 
 **Test**:

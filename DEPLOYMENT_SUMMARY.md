@@ -2,7 +2,7 @@
 
 **Date**: 2026-11-07  
 **Status**: ✅ Git Repository Initialized & Infrastructure-as-Code Committed  
-**Pinned Version**: ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:v0.2.1
+**Pinned Version**: ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:2026.11.1
 
 ---
 
@@ -33,7 +33,7 @@
 ### 4. Security by Design
 - ✅ Non-root container execution (UID 1000)
 - ✅ No privileged mode, no Docker socket access
-- ✅ Localhost-only gateway (http://127.0.0.1:8080)
+- ✅ Localhost-only gateway (http://127.0.0.1:18789)
 - ✅ No access to host filesystem, NAS, VideoDB, or worker queue
 - ✅ Secrets kept in git-ignored .env.local (never committed)
 - ✅ Explicit tool restrictions: chat-only, no shell/file access in pilot phase
@@ -136,7 +136,7 @@ bash scripts/deploy.sh up
 
 # Expected output:
 # [✓] Deployment complete!
-# Gateway available at: http://127.0.0.1:8080
+# Gateway available at: http://127.0.0.1:18789
 ```
 
 ### Step 3: Verify Deployment
@@ -230,7 +230,7 @@ DEPLOYMENT
 - [ ] Docker container starts without errors: bash scripts/deploy.sh up
 - [ ] Health check passes: bash scripts/health-check.sh
 - [ ] Container running as non-root: docker exec openclaw-gateway id (should show uid=1000)
-- [ ] Gateway only binds localhost: netstat -tuln | grep 8080 (should show 127.0.0.1:8080)
+- [ ] Gateway only binds localhost: netstat -tuln | grep 18789 (should show 127.0.0.1:18789)
 - [ ] No Docker socket mounted: docker inspect openclaw-gateway | grep docker.sock (should be empty)
 
 DISCORD INTEGRATION

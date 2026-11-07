@@ -34,7 +34,7 @@ docker compose ps openclaw-gateway
 # Should show: Up (healthy)
 
 # 2. Gateway responsive?
-curl -I http://127.0.0.1:8080/health
+curl -I http://127.0.0.1:18789/health
 # Should return: HTTP 200
 
 # 3. Logs clean?
@@ -169,16 +169,16 @@ bash scripts/logs.sh tail 50  # Should show connection success
 
 **Symptoms**:
 ```
-ERROR: Ports are not available: listen tcp 127.0.0.1:8080: bind: address already in use
+ERROR: Ports are not available: listen tcp 127.0.0.1:18789: bind: address already in use
 ```
 
 **Diagnosis**:
 
 ```bash
-# Find what's using port 8080
-lsof -i :8080
+# Find what's using port 18789
+lsof -i :18789
 # or
-netstat -tuln | grep 8080
+netstat -tuln | grep 18789
 ```
 
 **Resolution**:

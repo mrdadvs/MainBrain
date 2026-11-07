@@ -188,21 +188,21 @@ Currently commented out; uncomment if resource exhaustion is a concern.
 OpenClaw Container
 ┌─────────────────────────────┐
 │ Listening on:               │
-│  127.0.0.1:8080 (gateway)   │ ← NOT accessible from network
+│  127.0.0.1:18789 (gateway)   │ ← NOT accessible from network
 │                             │    (only localhost)
 │ No other listening ports    │
 └─────────────────────────────┘
 ```
 
-**Gateway URL**: `http://127.0.0.1:8080` (localhost only)
+**Gateway URL**: `http://127.0.0.1:18789` (localhost only)
 
 **Access from remote machine**:
 ```bash
 # ✗ This will NOT work (intentional):
-curl http://192.168.1.50:8080/health
+curl http://192.168.1.50:18789/health
 
 # ✓ Only from MainBrain itself:
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:18789/health
 ```
 
 ### Outbound Network
@@ -233,7 +233,7 @@ Container → Allowed Outbound Connections
 docker network inspect openclaw-network
 
 # No port mappings to host network interface
-# (127.0.0.1:8080 binding doesn't expose to external IPs)
+# (127.0.0.1:18789 binding doesn't expose to external IPs)
 ```
 
 ---
@@ -447,7 +447,7 @@ Before production use, verify:
 - [ ] Container runs non-root (UID 1000, no privileged mode)
 - [ ] Docker socket is NOT mounted
 - [ ] No access to /etc, /root, /var, or host filesystem
-- [ ] Only localhost can access gateway (http://127.0.0.1:8080)
+- [ ] Only localhost can access gateway (http://127.0.0.1:18789)
 - [ ] Outbound restricted to Discord and OpenAI APIs
 - [ ] AGENT_CHAT_ONLY=true (no shell/file access)
 - [ ] AGENT_DISABLE_SKILLS=true (no plugins)

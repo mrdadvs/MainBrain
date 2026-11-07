@@ -2,7 +2,7 @@
 
 **Status**: Ready for pilot deployment  
 **Version**: 1.0 (Pilot: Single Discord test agent)  
-**Pinned Image**: ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:v0.2.1  
+**Pinned Image**: openclaw/openclaw:2026.11.1@sha256:db0e0809fbd0df375445e9eea8daf2a278ac7ac3a263fa6bfce8fb344ad3ad77  
 **Last Updated**: 2026-11-07
 
 ---
@@ -97,7 +97,7 @@ Send in Discord #agent-test:
 │  │  Networking (Local Access Only)                              │ │
 │  ├──────────────────────────────────────────────────────────────┤ │
 │  │                                                                │ │
-│  │  Gateway Dashboard: http://127.0.0.1:8080                    │ │
+│  │  Gateway Dashboard: http://127.0.0.1:18789                    │ │
 │  │  (localhost only - no external access)                        │ │
 │  │                                                                │ │
 │  │  Outbound:                                                    │ │
@@ -294,7 +294,7 @@ bash scripts/health-check.sh
 ...
 [✓] Deployment complete!
 
-Gateway available at: http://127.0.0.1:8080
+Gateway available at: http://127.0.0.1:18789
 ```
 
 ### Check Status Anytime
@@ -323,7 +323,7 @@ docker ps | grep openclaw-gateway
 ### Test 2: Verify Gateway Port
 
 ```bash
-curl -I http://127.0.0.1:8080/health
+curl -I http://127.0.0.1:18789/health
 # Should return: HTTP 200
 ```
 
@@ -392,7 +392,7 @@ sleep 10
 
 #### Monthly
 - Review logs for errors/warnings
-- Update Docker images: `docker pull ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:v0.2.1`
+- Update Docker images: `docker pull openclaw/openclaw:2026.11.1`
 - Test restore: `bash scripts/restore-state.sh <backup-file>`
 
 ### Backup & Restore
@@ -473,7 +473,7 @@ bash scripts/logs.sh tail 50
 **Diagnostic**:
 ```bash
 netstat -tuln | grep 8080
-# Should NOT show 127.0.0.1:8080 in use
+# Should NOT show 127.0.0.1:18789 in use
 ```
 
 **Solution**:
