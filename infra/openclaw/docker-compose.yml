@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # MainBrain Discord Test Agent - Gateway
+  openclaw-gateway:
+    image: ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:v0.2.1@sha256:7f3e5d8a9c1b2e4f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6
+    # NOTE: Pin to specific version hash for reproducibility.
+    # To find latest sha256: docker inspect ghcr.io/sunwood-ai-oss-hub/agentos-openclaw-base:v0.2.1
+    container_name: openclaw-gateway
+    restart: unless-stopped
+    init: true
+    user: "${CONTAINER_UID:-1000}:${CONTAINER_GID:-1000}"
+    
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      NODE_ENV: production
+      
+      # Gateway configuration
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_GATEWAY_BIND: 127.0.0.1
+      OPENCLAW_GATEWAY_PORT: 8080
+      
+      # Discord integration
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      
+      # AI Provider credentials
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      
+      # Optional: Alternative providers (leave empty if not used)
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    
+    volumes:
+      # Persistent state directory: config, cache, logs
+      - ${DATA_STATE_DIR:-/home/mdv/mainbrain/data/openclaw/state}:/home/node/.openclaw
+      # Workspace for agent operations (chat history, temp files)
+      - ${WORKSPACE_DIR:-/home/mdv/mainbrain/data/openclaw/workspace}:/home/node/.openclaw/workspace
+    
+    ports:
+      # Gateway only accessible from localhost
+      - "127.0.0.1:8080:8080"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Remove stale lock files on startup
+    command: ["sh", "-c", "rm -f /home/node/.openclaw/*.lock && exec node dist/index.js gateway"]
+    
+    networks:
+      - openclaw-network
+    
+    # Resource limits (adjust based on available hardware)
+    # Uncomment to enable resource constraints
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 2G
+    #     reservations:
+    #       cpus: '1'
+    #       memory: 1G
+
+networks:
+  openclaw-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-openclaw
