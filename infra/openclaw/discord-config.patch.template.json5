@@ -1,0 +1,23 @@
+{
+  channels: {
+    discord: {
+      enabled: true,
+      token: {
+        source: "env",
+        provider: "default",
+        id: "DISCORD_BOT_TOKEN"
+      },
+      groupPolicy: "allowlist",
+      dmPolicy: "disabled",
+      guilds: {
+        "{{ DISCORD_SERVER_ID }}": {
+          requireMention: true,
+          users: ["{{ DISCORD_ALLOWED_USERS }}"],
+          channels: {
+            "{{ DISCORD_CHANNEL_ID }}": { enabled: true }
+          }
+        }
+      }
+    }
+  }
+}
