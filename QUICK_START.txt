@@ -1,0 +1,94 @@
+════════════════════════════════════════════════════════════════════════════════
+                        QUICK START: ADD CREDENTIALS
+════════════════════════════════════════════════════════════════════════════════
+
+SSH into MainBrain and run this ONE command:
+
+cat > ~/mainbrain/infra/openclaw/.env.local << 'EOF'
+OPENCLAW_IMAGE=openclaw/openclaw:2026.11.1
+OPENCLAW_CONFIG_DIR=/home/mdv/mainbrain/data/openclaw/state
+OPENCLAW_WORKSPACE_DIR=/home/mdv/mainbrain/data/openclaw/workspace
+OPENCLAW_AUTH_PROFILE_SECRET_DIR=/home/mdv/mainbrain/data/openclaw/secrets
+OPENCLAW_GATEWAY_TOKEN=PASTE_OUTPUT_OF_openssl_rand_-hex_32_HERE
+OPENCLAW_GATEWAY_PORT=18789
+OPENCLAW_TZ=UTC
+DISCORD_BOT_TOKEN=PASTE_YOUR_DISCORD_BOT_TOKEN_HERE
+DISCORD_SERVER_ID=PASTE_YOUR_SERVER_ID_HERE
+DISCORD_CHANNEL_ID=PASTE_YOUR_CHANNEL_ID_HERE
+DISCORD_ALLOWED_USERS=PASTE_YOUR_USER_ID_HERE
+DISCORD_REQUIRE_MENTION=true
+OPENAI_API_KEY=PASTE_YOUR_OPENAI_API_KEY_HERE
+OPENAI_BASE_URL=https://api.openai.com/v1
+AGENT_CHAT_ONLY=true
+AGENT_DISABLE_SKILLS=true
+LOG_LEVEL=info
+BACKUP_INTERVAL_HOURS=24
+MAX_BACKUPS=10
+DEBUG_MODE=false
+EOF
+
+chmod 600 ~/mainbrain/infra/openclaw/.env.local
+
+════════════════════════════════════════════════════════════════════════════════
+
+STEP-BY-STEP CREDENTIAL COLLECTION:
+
+Before pasting, gather these 6 values:
+
+1. OPENCLAW_GATEWAY_TOKEN (generate locally)
+   On MainBrain shell, run:
+   $ openssl rand -hex 32
+   Copy the 64-character hex output
+
+2. DISCORD_BOT_TOKEN
+   Discord Developer Portal > Applications > MainBrain Test > Bot > TOKEN
+   Starts with: MTA...
+
+3. DISCORD_SERVER_ID
+   Discord: Right-click "MainBrain" server > Copy Server ID
+   Numeric ID like: 987654321
+
+4. DISCORD_CHANNEL_ID
+   Discord: Right-click "#agent-test" channel > Copy Channel ID
+   Numeric ID like: 555666777
+
+5. DISCORD_ALLOWED_USERS
+   Discord: Right-click your username > Copy User ID
+   Numeric ID like: 123456789
+
+6. OPENAI_API_KEY
+   OpenAI Platform > API Keys > Create new secret key
+   Starts with: sk-proj- or sk-
+
+════════════════════════════════════════════════════════════════════════════════
+
+VERIFY AND DEPLOY:
+
+After pasting the .env.local file with real values:
+
+  1. Verify it's correct:
+     $ source ~/mainbrain/infra/openclaw/.env.local
+     $ bash ~/mainbrain/infra/openclaw/scripts/deploy.sh config
+
+  2. Deploy:
+     $ bash ~/mainbrain/infra/openclaw/scripts/deploy.sh up
+
+  3. Wait 10 seconds, then verify container is running:
+     $ docker compose -f ~/mainbrain/infra/openclaw/docker-compose.yml ps
+
+  4. Check logs:
+     $ bash ~/mainbrain/infra/openclaw/scripts/logs.sh
+
+  5. Test in Discord #agent-test channel:
+     @MainBrain Test What is 2 + 2?
+     → Bot should reply: "4"
+
+════════════════════════════════════════════════════════════════════════════════
+
+REFERENCE:
+
+.env.local is NOT in Git (already .gitignore'd) - safe for real secrets
+.env.example shows all available options - don't edit, use .env.local instead
+See ADD_CREDENTIALS.md for detailed help with each value
+
+════════════════════════════════════════════════════════════════════════════════
