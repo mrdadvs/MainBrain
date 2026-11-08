@@ -1,0 +1,143 @@
+{
+  "version": "2026.11.1",
+  "agents": [
+    {
+      "id": "mainbrain-test",
+      "name": "MainBrain Test",
+      "description": "Chat-only Discord test agent for MainBrain infrastructure validation",
+      "enabled": true,
+      "mode": "chat",
+      "settings": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.7,
+        "max_tokens": 4096
+      },
+      "bindings": {
+        "discord": {
+          "channel_id": "1234567890",
+          "channel_name": "agent-test",
+          "mention_required": true,
+          "allowed_user_ids": ["YOUR_USER_ID"]
+        }
+      },
+      "tools": []
+    },
+    {
+      "id": "librarian",
+      "name": "Librarian",
+      "description": "Media Librarian for MrDadVs - searches VideoDB footage, transcripts, and clips. Read-only access.",
+      "enabled": true,
+      "mode": "agent",
+      "instructions_file": "agents/librarian/instructions.md",
+      "soul_file": "agents/librarian/SOUL.md",
+      "settings": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.5,
+        "max_tokens": 8192,
+        "system_prompt_prefix": "You are the Librarian agent. Always respond with accurate video metadata. Never invent timestamps or filenames."
+      },
+      "bindings": {
+        "discord": {
+          "channel_id": "1234567890",
+          "channel_name": "librarian",
+          "mention_required": true,
+          "allowed_user_ids": ["YOUR_USER_ID"]
+        }
+      },
+      "tools": [
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "search_transcripts"
+        },
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "list_videos"
+        },
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "get_video_details"
+        },
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "list_video_clips"
+        },
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "list_import_sources"
+        },
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "preview_import"
+        },
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "list_processing_jobs"
+        },
+        {
+          "mcp_server": "videodb-mcp",
+          "tool_name": "get_processing_job"
+        }
+      ]
+    }
+  ],
+  "mcp_servers": [
+    {
+      "id": "videodb-mcp",
+      "name": "VideoDB MCP Server",
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "/home/mdv/mainbrain/apps/video_pipeline/mcp_server.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "envfile": "/home/mdv/mainbrain/apps/video_pipeline/.env.mcp",
+      "auto_start": true,
+      "restart_on_failure": true,
+      "description": "Read-only VideoDB access with search_transcripts, list_videos, clips, jobs"
+    }
+  ],
+  "discord": {
+    "bot_token": "${DISCORD_BOT_TOKEN}",
+    "intents": [
+      "GUILDS",
+      "GUILD_MESSAGES",
+      "MESSAGE_CONTENT",
+      "DIRECT_MESSAGES"
+    ],
+    "prefix": "@",
+    "status": {
+      "activity_type": "WATCHING",
+      "activity_text": "MainBrain footage"
+    }
+  },
+  "ai_providers": {
+    "openai": {
+      "api_key": "${OPENAI_API_KEY}",
+      "base_url": "${OPENAI_BASE_URL:-https://api.openai.com/v1}",
+      "models": ["gpt-4o-mini", "gpt-4o"]
+    }
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "outputs": [
+      "stderr",
+      "/home/node/.openclaw/logs/openclaw.log"
+    ]
+  },
+  "security": {
+    "agent_isolation": true,
+    "require_tool_approval": false,
+    "allowed_domains": [
+      "localhost",
+      "127.0.0.1"
+    ],
+    "rate_limit": {
+      "enabled": true,
+      "max_requests_per_minute": 60
+    }
+  }
+}
