@@ -24,9 +24,9 @@ services:
       OPENCLAW_CONFIG_DIR: /home/node/.openclaw
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       
-      # Gateway configuration: localhost-only (security requirement)
+      # Gateway configuration: lan binding inside Docker, published to localhost only
       OPENCLAW_GATEWAY_PORT: "18789"
-      OPENCLAW_GATEWAY_BIND: localhost
+      OPENCLAW_GATEWAY_BIND: lan
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       
       # Disable Bonjour in container environment
@@ -52,11 +52,23 @@ services:
     
     volumes:
       # Persistent state directory: config, cache, logs
-      - "${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw"
+      - type: bind
+        source: "${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}"
+        target: /home/node/.openclaw
+        bind:
+          propagation: rprivate
       # Workspace for agent operations (chat history, temp files)
-      - "${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace"
+      - type: bind
+        source: "${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}"
+        target: /home/node/.openclaw/workspace
+        bind:
+          propagation: rprivate
       # Auth profile secrets (protected local files)
-      - "${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-${HOME:-/tmp}/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw"
+      - type: bind
+        source: "${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-${HOME:-/tmp}/.openclaw-auth-profile-secrets}"
+        target: /home/node/.config/openclaw
+        bind:
+          propagation: rprivate
     
     ports:
       # Gateway only accessible from localhost (not remotely accessible)
@@ -85,7 +97,7 @@ services:
         "dist/index.js",
         "gateway",
         "--bind",
-        "localhost",
+        "lan",
         "--port",
         "18789",
       ]
@@ -135,9 +147,21 @@ services:
       TZ: ${OPENCLAW_TZ:-UTC}
     
     volumes:
-      - "${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw"
-      - "${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace"
-      - "${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-${HOME:-/tmp}/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw"
+      - type: bind
+        source: "${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}"
+        target: /home/node/.openclaw
+        bind:
+          propagation: rprivate
+      - type: bind
+        source: "${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}"
+        target: /home/node/.openclaw/workspace
+        bind:
+          propagation: rprivate
+      - type: bind
+        source: "${OPENCLAW_AUTH_PROFILE_SECRET_DIR:-${HOME:-/tmp}/.openclaw-auth-profile-secrets}"
+        target: /home/node/.config/openclaw
+        bind:
+          propagation: rprivate
     
     # Security: drop unnecessary capabilities
     cap_drop:
