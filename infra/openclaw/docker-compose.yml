@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # MainBrain Discord Test Agent - Gateway
   # Official OpenClaw image from Docker Hub: openclaw/openclaw:2026.11.1
