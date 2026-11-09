@@ -1,0 +1,66 @@
+{
+  // Add/update one agent definition.
+  // Object merge: existing agents.entries.* are preserved.
+  agents: {
+    entries: {
+      "<AGENT_ID>": {
+        name: "<AGENT_NAME>",
+        description: "<AGENT_DESCRIPTION>",
+        workspace: "/home/node/.openclaw/workspace/<AGENT_ID>",
+        model: "<MODEL_ID>",
+        contextInjection: "always",
+        tools: {
+          allow: [
+            "<ALLOWED_TOOL_1>",
+            "<ALLOWED_TOOL_2>"
+          ]
+        }
+      }
+    }
+  },
+
+  // Add/update one Discord account for this agent.
+  // Object merge: existing channels.discord.accounts.* are preserved.
+  channels: {
+    discord: {
+      // Keep existing defaults/routing unless intentionally changing them.
+      accounts: {
+        "<DISCORD_ACCOUNT_ID>": {
+          enabled: true,
+          token: {
+            source: "store",
+            provider: "default",
+            id: "DISCORD_<AGENT_KEY>_BOT_TOKEN"
+          },
+          groupPolicy: "allowlist",
+          dmPolicy: "disabled",
+          guilds: {
+            "<DISCORD_GUILD_ID>": {
+              requireMention: true,
+              users: ["<DISCORD_ALLOWED_USER_ID>"],
+              channels: {
+                "<DISCORD_CHANNEL_ID>": { enabled: true }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  // IMPORTANT: bindings is array-replace in config patch.
+  // Start from `openclaw config get bindings --json`, then append your new entry.
+  // Keep existing fallback bindings unless intentionally changing routing.
+  bindings: [
+    // Paste current bindings here first.
+
+    // Then add new route for this account -> this agent.
+    {
+      agentId: "<AGENT_ID>",
+      match: {
+        channel: "discord",
+        accountId: "<DISCORD_ACCOUNT_ID>"
+      }
+    }
+  ]
+}
