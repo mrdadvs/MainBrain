@@ -44,11 +44,13 @@ env/
 .env.production.local
 infra/openclaw/.env.local
 infra/openclaw/.env.*.local
+infra/openclaw/.env.videodb_*
 infra/openclaw/discord-config.patch.json5
 
 # Persistent runtime data
 data/
 !data/.gitkeep
+repos/
 
 # Docker
 docker-compose.override.yml

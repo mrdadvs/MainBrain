@@ -1,0 +1,26 @@
+FROM python:3.12.8-slim
+
+LABEL org.opencontainers.image.title="MainBrain Engineer Code MCP"
+LABEL org.opencontainers.image.description="Safe repository discovery and workspace creation MCP service"
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 1000 engineer && useradd -u 1000 -g 1000 -m -s /usr/sbin/nologin engineer
+
+WORKDIR /app
+
+COPY apps/engineer_code_mcp/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --index-url https://pypi.org/simple/ -r /tmp/requirements.txt
+
+COPY apps/engineer_code_mcp/mcp_server_http.py /app/mcp_server_http.py
+COPY apps/engineer_code_mcp/server.py /app/server.py
+
+RUN chown -R engineer:engineer /app && chmod -R 550 /app
+USER engineer
+
+EXPOSE 9010
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=5 --start-period=10s \
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9010/health', timeout=3)" || exit 1
+
+ENTRYPOINT ["python3", "mcp_server_http.py"]

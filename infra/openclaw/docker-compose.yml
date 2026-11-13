@@ -69,6 +69,20 @@ services:
         target: /home/node/.config/openclaw
         bind:
           propagation: rprivate
+      # MCP Server code - allows OpenClaw to spawn subprocess
+      - type: bind
+        source: /home/mdv/mainbrain/apps/video_pipeline
+        target: /home/node/mcp-server
+        bind:
+          propagation: rprivate
+        read_only: true
+      # MCP Server credentials - secure, read-only
+      - type: bind
+        source: /home/mdv/mainbrain/apps/video_pipeline/.env.mcp
+        target: /home/node/mcp-server/.env.mcp
+        bind:
+          propagation: rprivate
+        read_only: true
     
     ports:
       # Gateway only accessible from localhost (not remotely accessible)
@@ -117,6 +131,65 @@ services:
     #       memory: 1G
 
   # CLI service for manual gateway interaction (optional)
+  videodb-mcp:
+    build:
+      context: ../..
+      dockerfile: infra/openclaw/Dockerfile.mcp
+    image: mainbrain-videodb-mcp:checkpoint3
+    container_name: videodb-mcp
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: .env.videodb_mcp
+        required: true
+    networks:
+      - openclaw-network
+      - postgres-shared
+
+  engineer-code-mcp:
+    build:
+      context: ../..
+      dockerfile: infra/openclaw/Dockerfile.engineer_mcp
+    image: mainbrain-engineer-code-mcp:checkpoint2a
+    container_name: engineer-code-mcp
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ENGINEER_CODE_MCP_BIND: "0.0.0.0"
+      ENGINEER_CODE_MCP_PORT: "9010"
+      ENGINEER_CODE_MCP_PATH: "/mcp"
+      ENGINEER_CODE_MCP_PROJECTS_FILE: "/srv/engineer/config/allowed_projects.json"
+      ENGINEER_CODE_MCP_WORKSPACES_ROOT: "/srv/engineer/workspaces"
+      ENGINEER_RUNNER_SOCKET_PATH: "/srv/engineer/runner/runner.sock"
+      ENGINEER_RUNNER_AUTH_TOKEN: "${ENGINEER_RUNNER_AUTH_TOKEN:-engineer-runner-dev-token}"
+      ENGINEER_RUNNER_TIMEOUT_SECONDS: "90"
+    volumes:
+      - type: bind
+        source: /home/mdv/mainbrain/repos
+        target: /srv/repos
+        bind:
+          propagation: rprivate
+        read_only: true
+      - type: bind
+        source: /home/mdv/mainbrain/apps/engineer_code_mcp/config
+        target: /srv/engineer/config
+        bind:
+          propagation: rprivate
+        read_only: true
+      - type: bind
+        source: /home/mdv/mainbrain/data/engineer-code-mcp/workspaces
+        target: /srv/engineer/workspaces
+        bind:
+          propagation: rprivate
+      - type: bind
+        source: /home/mdv/mainbrain/data/engineer-code-runner
+        target: /srv/engineer/runner
+        bind:
+          propagation: rprivate
+    networks:
+      - openclaw-network
+
   openclaw-cli:
     image: openclaw/openclaw:2026.11.1@sha256:db0e0809fbd0df375445e9eea8daf2a278ac7ac3a263fa6bfce8fb344ad3ad77
     network_mode: "service:openclaw-gateway"
@@ -181,3 +254,6 @@ services:
 networks:
   openclaw-network:
     driver: bridge
+  postgres-shared:
+    external: true
+    name: postgres_default

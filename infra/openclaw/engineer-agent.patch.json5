@@ -1,0 +1,63 @@
+{
+  mcp: {
+    servers: {
+      engineer: {
+        enabled: true,
+        url: "http://engineer-code-mcp:9010/mcp",
+        transport: "streamable-http",
+        connectionTimeoutMs: 20000,
+        requestTimeoutMs: 30000,
+        toolFilter: {
+          include: [
+            "list_projects",
+            "list_files",
+            "read_file",
+            "search_code",
+            "create_workspace",
+            "apply_patch",
+            "get_diff",
+            "run_checks",
+            "render_artifact",
+            "resolve_artifact",
+            "commit_changes",
+            "merge_to_integration",
+            "test_merged_code",
+            "prepare_release"
+          ]
+        },
+        codex: {
+          agents: ["engineer"]
+        }
+      }
+    }
+  },
+  agents: {
+    entries: {
+      engineer: {
+        name: "Engineer",
+        description: "Isolated coding agent for repository tasks with test, render, artifact-delivery, and release-prep workflow",
+        workspace: "/home/node/.openclaw/workspace/engineer",
+        model: "openai/gpt-6-luna",
+        contextInjection: "always",
+        tools: {
+          allow: [
+            "engineer__list_projects",
+            "engineer__list_files",
+            "engineer__read_file",
+            "engineer__search_code",
+            "engineer__create_workspace",
+            "engineer__apply_patch",
+            "engineer__get_diff",
+            "engineer__run_checks",
+            "engineer__render_artifact",
+            "engineer__resolve_artifact",
+            "engineer__commit_changes",
+            "engineer__merge_to_integration",
+            "engineer__test_merged_code",
+            "engineer__prepare_release"
+          ]
+        }
+      }
+    }
+  }
+}

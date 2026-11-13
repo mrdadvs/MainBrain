@@ -1,0 +1,20 @@
+[Unit]
+Description=MainBrain Engineer Code Runner controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mdv/mainbrain
+EnvironmentFile=-/home/mdv/mainbrain/infra/openclaw/.env.local
+Environment=ENGINEER_RUNNER_SOCKET_PATH=/home/mdv/mainbrain/data/engineer-code-runner/runner.sock
+Environment=ENGINEER_RUNNER_ALLOWED_PEER_UID=1000
+Environment=ENGINEER_RUNNER_AUTH_TOKEN=engineer-runner-dev-token
+ExecStart=/home/mdv/mainbrain/infra/openclaw/scripts/run-engineer-code-runner.sh
+Restart=always
+RestartSec=2
+UMask=007
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

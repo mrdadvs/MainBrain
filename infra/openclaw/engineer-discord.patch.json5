@@ -1,0 +1,50 @@
+{
+  channels: {
+    discord: {
+      accounts: {
+        engineer: {
+          enabled: true,
+          token: {
+            source: "store",
+            provider: "default",
+            id: "DISCORD_ENGINEER_BOT_TOKEN"
+          },
+          groupPolicy: "allowlist",
+          dmPolicy: "disabled",
+          guilds: {
+            "1568656073898987651": {
+              requireMention: true,
+              users: ["1568655444321243136"],
+              channels: {
+                "1570598910173646890": { enabled: true }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  bindings: [
+    {
+      agentId: "engineer",
+      match: {
+        channel: "discord",
+        accountId: "engineer"
+      }
+    },
+    {
+      agentId: "librarian",
+      match: {
+        channel: "discord",
+        accountId: "librarian"
+      }
+    },
+    {
+      agentId: "main",
+      match: {
+        channel: "discord",
+        accountId: "*"
+      }
+    }
+  ]
+}

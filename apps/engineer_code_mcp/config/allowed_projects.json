@@ -1,0 +1,9 @@
+{
+  "projects": [
+    {
+      "id": "engineer-sandbox",
+      "path": "/srv/repos/engineer-sandbox",
+      "default_branch": "main"
+    }
+  ]
+}
