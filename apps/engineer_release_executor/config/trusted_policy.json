@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "repositories": [
+    {
+      "id": "engineer-sandbox",
+      "managed_project_id": "engineer-sandbox",
+      "allowed_remotes": [
+        "sandbox-release"
+      ],
+      "remote_paths": {
+        "sandbox-release": "/home/mdv/mainbrain/repos/engineer-sandbox-release.git"
+      },
+      "allowed_target_branches": [
+        "main"
+      ],
+      "deployment_profiles": [
+        {
+          "id": "sandbox-pilot",
+          "allowed_services": [
+            "engineer-sandbox-service"
+          ],
+          "deployment_target": {
+            "service_id": "engineer-sandbox-service",
+            "compose_file": "/home/mdv/mainbrain/infra/engineer_sandbox_deploy/docker-compose.yml",
+            "compose_project": "engineer-sandbox-pilot",
+            "compose_service": "sandbox-web",
+            "source_subpath": "sandbox_web",
+            "application_base_url": "http://127.0.0.1:18765",
+            "container_port": 8080,
+            "healthcheck_url": "http://127.0.0.1:18765/health",
+            "version_url": "http://127.0.0.1:18765/version",
+            "health_timeout_seconds": 30,
+            "health_interval_seconds": 1.0,
+            "deploy_failure_marker": "sandbox_web/FAIL_DEPLOY",
+            "rollback_failure_marker": "sandbox_web/FAIL_ROLLBACK"
+          },
+          "required_check_profiles": [
+            {
+              "check_id": "python_unit",
+              "check_config_version": "python_unit_v2"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

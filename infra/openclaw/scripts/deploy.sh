@@ -61,7 +61,7 @@ cd "${SCRIPT_DIR}"
 case "${COMMAND}" in
     up)
         echo "[*] Starting OpenClaw gateway..."
-        docker compose up -d --pull always
+        docker compose --env-file "${SCRIPT_DIR}/.env.local" up -d --pull always
         echo ""
         echo "[*] Waiting for gateway to start..."
         sleep 5
@@ -74,13 +74,13 @@ case "${COMMAND}" in
     
     down)
         echo "[*] Stopping OpenClaw gateway..."
-        docker compose down --remove-orphans
+        docker compose --env-file "${SCRIPT_DIR}/.env.local" down --remove-orphans
         echo "[✓] Gateway stopped"
         ;;
     
     restart)
         echo "[*] Restarting OpenClaw gateway..."
-        docker compose restart
+        docker compose --env-file "${SCRIPT_DIR}/.env.local" restart
         echo "[*] Waiting for gateway to restart..."
         sleep 5
         bash "${SCRIPT_DIR}/scripts/health-check.sh" || true

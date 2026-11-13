@@ -1,0 +1,18 @@
+[Unit]
+Description=MainBrain Engineer Discord Release Approver
+After=network-online.target engineer-release-executor.service
+Wants=network-online.target
+Requires=engineer-release-executor.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mdv/mainbrain
+EnvironmentFile=-/home/mdv/.config/mainbrain/engineer-release-approver.env
+Environment=ENGINEER_RELEASE_EXECUTOR_SOCKET_PATH=/home/mdv/mainbrain/data/engineer-release-executor/release-executor.sock
+ExecStart=/home/mdv/mainbrain/infra/openclaw/scripts/run-engineer-discord-approver.sh
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

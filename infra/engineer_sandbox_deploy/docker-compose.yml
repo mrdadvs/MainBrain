@@ -1,0 +1,16 @@
+services:
+  sandbox-web:
+    image: python:3.12.8-slim
+    container_name: engineer-sandbox-web
+    restart: unless-stopped
+    working_dir: /opt/source
+    command: ["python", "-u", "/opt/source/app.py"]
+    environment:
+      RELEASE_COMMIT_SHA: "${RELEASE_COMMIT_SHA}"
+    volumes:
+      - type: bind
+        source: ${SOURCE_SNAPSHOT_PATH}
+        target: /opt/source
+        read_only: true
+    ports:
+      - "127.0.0.1:18765:8080"

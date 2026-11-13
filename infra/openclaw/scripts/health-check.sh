@@ -3,7 +3,7 @@
 
 set -e
 
-GATEWAY_URL="http://127.0.0.1:8080"
+GATEWAY_URL="http://127.0.0.1:18789"
 TIMEOUT=10
 RETRIES=3
 
@@ -37,7 +37,7 @@ echo ""
 echo "Troubleshooting:"
 echo "  1. Check container logs: docker compose logs openclaw-gateway"
 echo "  2. Verify container is running: docker ps | grep openclaw"
-echo "  3. Check port is bound: netstat -tuln | grep 8080"
+echo "  3. Check port is bound: netstat -tuln | grep 18789"
 echo "  4. Verify configuration: cat .env.local | grep -i token"
 echo ""
 exit 1

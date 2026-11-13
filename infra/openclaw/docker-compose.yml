@@ -161,9 +161,15 @@ services:
       ENGINEER_CODE_MCP_PATH: "/mcp"
       ENGINEER_CODE_MCP_PROJECTS_FILE: "/srv/engineer/config/allowed_projects.json"
       ENGINEER_CODE_MCP_WORKSPACES_ROOT: "/srv/engineer/workspaces"
+      ENGINEER_RELEASE_POLICY_FILE: "/srv/engineer/release-policy/trusted_policy.json"
+      ENGINEER_TRUSTED_REMOTE_HOST_ROOT: "/home/mdv/mainbrain/repos"
+      ENGINEER_TRUSTED_REMOTE_CONTAINER_ROOT: "/srv/repos"
       ENGINEER_RUNNER_SOCKET_PATH: "/srv/engineer/runner/runner.sock"
       ENGINEER_RUNNER_AUTH_TOKEN: "${ENGINEER_RUNNER_AUTH_TOKEN:-engineer-runner-dev-token}"
       ENGINEER_RUNNER_TIMEOUT_SECONDS: "90"
+      ENGINEER_RELEASE_EXECUTOR_SOCKET_PATH: "/srv/engineer/release-executor/release-executor.sock"
+      ENGINEER_RELEASE_EXECUTOR_AUTH_TOKEN: "${ENGINEER_RELEASE_EXECUTOR_AUTH_TOKEN:-engineer-release-executor-dev-token}"
+      ENGINEER_RELEASE_EXECUTOR_TIMEOUT_SECONDS: "120"
     volumes:
       - type: bind
         source: /home/mdv/mainbrain/repos
@@ -178,6 +184,12 @@ services:
           propagation: rprivate
         read_only: true
       - type: bind
+        source: /home/mdv/mainbrain/apps/engineer_release_executor/config
+        target: /srv/engineer/release-policy
+        bind:
+          propagation: rprivate
+        read_only: true
+      - type: bind
         source: /home/mdv/mainbrain/data/engineer-code-mcp/workspaces
         target: /srv/engineer/workspaces
         bind:
@@ -185,6 +197,11 @@ services:
       - type: bind
         source: /home/mdv/mainbrain/data/engineer-code-runner
         target: /srv/engineer/runner
+        bind:
+          propagation: rprivate
+      - type: bind
+        source: /home/mdv/mainbrain/data/engineer-release-executor
+        target: /srv/engineer/release-executor
         bind:
           propagation: rprivate
     networks:

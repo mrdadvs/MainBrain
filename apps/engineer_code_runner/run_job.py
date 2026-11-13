@@ -25,10 +25,40 @@ MAX_SOCKET_REQUEST_BYTES = 32_000
 MAX_OUTPUT_BYTES = 12_000
 MAX_RENDER_LOG_BYTES = 40_000
 MAX_ARTIFACT_BYTES_DEFAULT = 200_000_000
+WORKSPACE_METADATA_ROOT = MANAGED_WORKSPACES_ROOT / "_engineer_meta"
+RELEASE_EXECUTOR_SOCKET_PATH = Path(
+    os.getenv(
+        "ENGINEER_RELEASE_EXECUTOR_SOCKET_PATH",
+        "/home/mdv/mainbrain/data/engineer-release-executor/release-executor.sock",
+    )
+)
+RELEASE_EXECUTOR_TIMEOUT_SECONDS = int(os.getenv("ENGINEER_RELEASE_EXECUTOR_TIMEOUT_SECONDS", "30"))
+RUNNER_EVIDENCE_AUTH_TOKEN = os.getenv("ENGINEER_RELEASE_EXECUTOR_EVIDENCE_AUTH_TOKEN", "")
+RUNNER_CONTROLLER_NAME = "engineer-code-runner"
+TRUSTED_GIT_ENV = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_ASKPASS": "/bin/false",
+    "GIT_PAGER": "cat",
+    "HUSKY": "0",
+}
+TRUSTED_GIT_ARGS = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "commit.gpgSign=false",
+    "-c",
+    "advice.detachedHead=false",
+    "-c",
+    "protocol.file.allow=never",
+]
+SHA1_PATTERN = r"[0-9a-f]{40}"
 
 APPROVED_CHECKS: dict[str, dict[str, Any]] = {
     "python_unit": {
         "timeout_seconds": 30,
+        "config_version": "python_unit_v2",
         "mode": "discover",
         "discover": {
             "root": "tests",
@@ -39,8 +69,18 @@ APPROVED_CHECKS: dict[str, dict[str, Any]] = {
             ],
         },
     },
-    "python_isolation": {"tests": ["tests.test_isolation"], "timeout_seconds": 30, "mode": "explicit"},
-    "python_fail_demo": {"tests": ["tests.test_intentional_failure"], "timeout_seconds": 30, "mode": "explicit"},
+    "python_isolation": {
+        "tests": ["tests.test_isolation"],
+        "timeout_seconds": 30,
+        "mode": "explicit",
+        "config_version": "python_isolation_v1",
+    },
+    "python_fail_demo": {
+        "tests": ["tests.test_intentional_failure"],
+        "timeout_seconds": 30,
+        "mode": "explicit",
+        "config_version": "python_fail_demo_v1",
+    },
 }
 
 APPROVED_RENDER_PROFILES: dict[str, dict[str, Any]] = {
@@ -69,6 +109,36 @@ def _truncate_output(value: str, max_bytes: int = MAX_OUTPUT_BYTES) -> tuple[str
         return value, False
     truncated = payload[:max_bytes].decode("utf-8", errors="ignore")
     return f"{truncated}\n...output truncated...\n", True
+
+
+def _trusted_git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(TRUSTED_GIT_ENV)
+    return env
+
+
+def _run_git(
+    worktree: Path,
+    args: list[str],
+    *,
+    allowed_exit_codes: set[int] | None = None,
+    strip_output: bool = True,
+) -> str:
+    exit_codes = allowed_exit_codes or {0}
+    command = ["git", *TRUSTED_GIT_ARGS, *args]
+    proc = subprocess.run(
+        command,
+        cwd=str(worktree),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_trusted_git_env(),
+    )
+    if proc.returncode not in exit_codes:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise ValueError(detail)
+    output = proc.stdout or ""
+    return output.strip() if strip_output else output
 
 
 def _validate_name(name: str) -> None:
@@ -144,6 +214,130 @@ def _resolve_in_workspace(workspace: Path, rel_path: str) -> Path:
     return candidate
 
 
+def _make_readable_tree(root: Path) -> None:
+    if root.exists():
+        root.chmod(root.stat().st_mode | 0o555)
+    for entry in root.rglob("*"):
+        mode = entry.stat().st_mode
+        if entry.is_dir():
+            entry.chmod(mode | 0o555)
+        elif entry.is_file():
+            entry.chmod(mode | 0o444)
+
+
+def _read_workspace_metadata(workspace_id: str) -> dict[str, Any]:
+    metadata_path = (WORKSPACE_METADATA_ROOT / f"{workspace_id}.json").resolve()
+    if not metadata_path.exists():
+        return {}
+    try:
+        metadata_path.relative_to(WORKSPACE_METADATA_ROOT.resolve())
+    except ValueError as exc:
+        raise ValueError("workspace metadata escaped approved root") from exc
+    if metadata_path.is_symlink():
+        raise ValueError("workspace metadata symlinks are not allowed")
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("workspace metadata is invalid")
+    return payload
+
+
+def _workspace_project_id(workspace: Path) -> str:
+    rel = workspace.resolve().relative_to(MANAGED_WORKSPACES_ROOT.resolve())
+    if len(rel.parts) < 2:
+        raise ValueError("workspace path is malformed")
+    project_id = rel.parts[0]
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", project_id):
+        raise ValueError("workspace project id is invalid")
+    return project_id
+
+
+def _integration_context(workspace: Path, workspace_id: str) -> dict[str, Any]:
+    metadata = _read_workspace_metadata(workspace_id)
+    if metadata.get("workspace_type") != "integration":
+        raise ValueError("workspace is not an integration workspace")
+    if not bool(metadata.get("merged")):
+        raise ValueError("integration workspace has no successful merge")
+    expected_commit = str(metadata.get("integration_commit_sha", "")).strip()
+    if not re.fullmatch(SHA1_PATTERN, expected_commit):
+        raise ValueError("integration metadata missing valid integration commit SHA")
+
+    current_commit = _run_git(workspace, ["rev-parse", "HEAD"])
+    if current_commit != expected_commit:
+        raise ValueError("integration workspace HEAD differs from metadata integration commit")
+
+    status = _run_git(
+        workspace,
+        ["status", "--porcelain=1", "--untracked-files=all", "--", "."],
+        strip_output=False,
+    )
+    if status.strip():
+        raise ValueError("integration workspace has uncommitted changes; exact commit evidence requires a clean tree")
+
+    project_id = str(metadata.get("project_id", "")).strip() or _workspace_project_id(workspace)
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", project_id):
+        raise ValueError("integration metadata project_id is invalid")
+    return {
+        "project_id": project_id,
+        "integration_workspace_id": workspace_id,
+        "integration_commit_sha": expected_commit,
+    }
+
+
+def _copy_commit_snapshot(worktree: Path, commit_sha: str) -> tuple[Path, Path]:
+    snapshot_root = Path(tempfile.mkdtemp(prefix="engineer-runner-commit-"))
+    snapshot_worktree = snapshot_root / "worktree"
+    snapshot_worktree.mkdir(parents=True, exist_ok=True)
+    archive_path = snapshot_root / "source.tar"
+    _run_git(worktree, ["cat-file", "-e", f"{commit_sha}^{{commit}}"])
+    _run_git(worktree, ["archive", "--format=tar", commit_sha, "-o", str(archive_path)])
+    subprocess.run(
+        ["tar", "-xf", str(archive_path), "-C", str(snapshot_worktree)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _make_readable_tree(snapshot_worktree)
+    return snapshot_root, snapshot_worktree
+
+
+def _runner_execution_id() -> str:
+    return f"runner-exec-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+
+
+def _record_runner_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    if not RUNNER_EVIDENCE_AUTH_TOKEN:
+        raise ValueError("ENGINEER_RELEASE_EXECUTOR_EVIDENCE_AUTH_TOKEN must be set for trusted evidence recording")
+    request = {
+        "auth_token": RUNNER_EVIDENCE_AUTH_TOKEN,
+        "action": "record_test_evidence",
+        "payload": payload,
+    }
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(RELEASE_EXECUTOR_TIMEOUT_SECONDS)
+        client.connect(str(RELEASE_EXECUTOR_SOCKET_PATH))
+        client.sendall((json.dumps(request) + "\n").encode("utf-8"))
+        buffer = bytearray()
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+            if b"\n" in chunk:
+                break
+            if len(buffer) > MAX_SOCKET_REQUEST_BYTES:
+                raise ValueError("release executor evidence response exceeded size limit")
+    if not buffer:
+        raise ValueError("release executor evidence response was empty")
+    response = json.loads(bytes(buffer).split(b"\n", 1)[0].decode("utf-8"))
+    if not isinstance(response, dict):
+        raise ValueError("release executor evidence response was invalid")
+    if response.get("error"):
+        raise ValueError(str(response["error"]))
+    if not bool(response.get("ok")):
+        raise ValueError("release executor evidence recording failed")
+    return response
+
+
 def _copy_snapshot(worktree: Path) -> tuple[Path, Path]:
     snapshot_root = Path(tempfile.mkdtemp(prefix="engineer-runner-"))
     snapshot_worktree = snapshot_root / "worktree"
@@ -153,6 +347,7 @@ def _copy_snapshot(worktree: Path) -> tuple[Path, Path]:
         symlinks=False,
         ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache"),
     )
+    _make_readable_tree(snapshot_worktree)
     return snapshot_root, snapshot_worktree
 
 
@@ -212,9 +407,20 @@ def _force_remove_container(run_id: str) -> None:
     )
 
 
-def run_job(worktree_path: str, tests: list[str], timeout_seconds: int = 30) -> dict:
+def run_job(
+    worktree_path: str,
+    tests: list[str],
+    timeout_seconds: int = 30,
+    commit_sha: str | None = None,
+    prebuilt_snapshot: tuple[Path, Path] | None = None,
+) -> dict:
     worktree = Path(worktree_path).resolve()
-    snapshot_root, snapshot_worktree = _copy_snapshot(worktree)
+    if prebuilt_snapshot is not None:
+        snapshot_root, snapshot_worktree = prebuilt_snapshot
+    elif commit_sha:
+        snapshot_root, snapshot_worktree = _copy_commit_snapshot(worktree, commit_sha=commit_sha)
+    else:
+        snapshot_root, snapshot_worktree = _copy_snapshot(worktree)
 
     run_id = f"engineer-run-{uuid.uuid4().hex[:10]}"
     cleanup_ok = False
@@ -293,6 +499,7 @@ def run_job(worktree_path: str, tests: list[str], timeout_seconds: int = 30) -> 
             "worktree": str(worktree),
             "snapshot_root": str(snapshot_root),
             "snapshot_worktree": str(snapshot_worktree),
+            "snapshot_commit_sha": commit_sha or "",
             "tests": tests,
             "timeout_seconds": timeout_seconds,
             "exit_code": exit_code,
@@ -743,17 +950,76 @@ def _handle_request(request: dict[str, Any], auth_token: str) -> dict[str, Any]:
         check = APPROVED_CHECKS.get(check_id)
         if check is None:
             raise ValueError(f"check_id '{check_id}' is not approved")
-        tests = _resolve_tests_for_check(worktree=workspace, check=check, check_id=check_id)
-        run = run_job(
-            worktree_path=str(workspace),
-            tests=tests,
-            timeout_seconds=int(check["timeout_seconds"]),
-        )
+        check_config_version = str(check.get("config_version", "")).strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", check_config_version):
+            raise ValueError(f"check_id '{check_id}' is missing a valid config_version")
+        integration_context: dict[str, Any] | None = None
+        metadata = _read_workspace_metadata(workspace_id)
+        if metadata.get("workspace_type") == "integration":
+            integration_context = _integration_context(workspace=workspace, workspace_id=workspace_id)
+            snapshot_root, snapshot_worktree = _copy_commit_snapshot(
+                workspace,
+                commit_sha=integration_context["integration_commit_sha"],
+            )
+            try:
+                tests = _resolve_tests_for_check(worktree=snapshot_worktree, check=check, check_id=check_id)
+                run = run_job(
+                    worktree_path=str(workspace),
+                    tests=tests,
+                    timeout_seconds=int(check["timeout_seconds"]),
+                    commit_sha=integration_context["integration_commit_sha"],
+                    prebuilt_snapshot=(snapshot_root, snapshot_worktree),
+                )
+            except Exception:
+                shutil.rmtree(snapshot_root, ignore_errors=True)
+                raise
+        else:
+            tests = _resolve_tests_for_check(worktree=workspace, check=check, check_id=check_id)
+            run = run_job(
+                worktree_path=str(workspace),
+                tests=tests,
+                timeout_seconds=int(check["timeout_seconds"]),
+            )
+        evidence: dict[str, Any] | None = None
+        if integration_context is not None:
+            execution_id = _runner_execution_id()
+            observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            evidence_payload = {
+                "workspace_path": str(workspace),
+                "check_id": check_id,
+                "check_config_version": check_config_version,
+                "tests": run["tests"],
+                "timeout_seconds": run["timeout_seconds"],
+                "exit_code": run["exit_code"],
+                "timed_out": run["timed_out"],
+                "stdout_truncated": run["stdout_truncated"],
+                "stderr_truncated": run["stderr_truncated"],
+                "limits": run["limits"],
+                "snapshot_commit_sha": run.get("snapshot_commit_sha", ""),
+            }
+            evidence = _record_runner_evidence(
+                {
+                    "repository_id": integration_context["project_id"],
+                    "integration_workspace_id": integration_context["integration_workspace_id"],
+                    "integration_commit_sha": integration_context["integration_commit_sha"],
+                    "check_id": check_id,
+                    "check_config_version": check_config_version,
+                    "execution_id": execution_id,
+                    "source_controller": RUNNER_CONTROLLER_NAME,
+                    "source_run_id": run["run_id"],
+                    "result_state": "passed" if run["exit_code"] == 0 and not run["timed_out"] else "failed",
+                    "exit_code": int(run["exit_code"]),
+                    "timed_out": bool(run["timed_out"]),
+                    "observed_at": observed_at,
+                    "evidence_payload": evidence_payload,
+                }
+            )
         return {
             "ok": run["exit_code"] == 0 and not run["timed_out"],
             "workspace_id": workspace_id,
             "workspace_path": str(workspace),
             "check_id": check_id,
+            "check_config_version": check_config_version,
             "tests": run["tests"],
             "exit_code": run["exit_code"],
             "timed_out": run["timed_out"],
@@ -763,6 +1029,9 @@ def _handle_request(request: dict[str, Any], auth_token: str) -> dict[str, Any]:
             "stderr_truncated": run["stderr_truncated"],
             "limits": run["limits"],
             "timeout_seconds": run["timeout_seconds"],
+            "tested_commit_sha": run.get("snapshot_commit_sha", "") or _run_git(workspace, ["rev-parse", "HEAD"]),
+            "evidence_recorded": evidence is not None,
+            "evidence": evidence,
         }
 
     render_profile = request.get("render_profile", "")

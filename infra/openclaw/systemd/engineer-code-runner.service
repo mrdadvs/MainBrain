@@ -10,6 +10,9 @@ EnvironmentFile=-/home/mdv/mainbrain/infra/openclaw/.env.local
 Environment=ENGINEER_RUNNER_SOCKET_PATH=/home/mdv/mainbrain/data/engineer-code-runner/runner.sock
 Environment=ENGINEER_RUNNER_ALLOWED_PEER_UID=1000
 Environment=ENGINEER_RUNNER_AUTH_TOKEN=engineer-runner-dev-token
+Environment=ENGINEER_RELEASE_EXECUTOR_SOCKET_PATH=/home/mdv/mainbrain/data/engineer-release-executor/release-executor.sock
+Environment=ENGINEER_RELEASE_EXECUTOR_TIMEOUT_SECONDS=30
+Environment=ENGINEER_RELEASE_EXECUTOR_EVIDENCE_AUTH_TOKEN=engineer-release-evidence-dev-token
 ExecStart=/home/mdv/mainbrain/infra/openclaw/scripts/run-engineer-code-runner.sh
 Restart=always
 RestartSec=2

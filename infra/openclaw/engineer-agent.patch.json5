@@ -22,7 +22,8 @@
             "commit_changes",
             "merge_to_integration",
             "test_merged_code",
-            "prepare_release"
+            "prepare_release",
+            "execute_release"
           ]
         },
         codex: {
@@ -54,7 +55,8 @@
             "engineer__commit_changes",
             "engineer__merge_to_integration",
             "engineer__test_merged_code",
-            "engineer__prepare_release"
+            "engineer__prepare_release",
+            "engineer__execute_release"
           ]
         }
       }

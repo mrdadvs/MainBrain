@@ -87,13 +87,13 @@
       "type": "stdio",
       "command": "python3",
       "args": [
-        "/home/mdv/mainbrain/apps/video_pipeline/mcp_server.py"
+        "/home/node/mcp-server/mcp_server.py"
       ],
       "env": {
         "PYTHONUNBUFFERED": "1",
         "PYTHONDONTWRITEBYTECODE": "1"
       },
-      "envfile": "/home/mdv/mainbrain/apps/video_pipeline/.env.mcp",
+      "envfile": "/home/node/mcp-server/.env.mcp",
       "auto_start": true,
       "restart_on_failure": true,
       "description": "Read-only VideoDB access with search_transcripts, list_videos, clips, jobs"

@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -23,10 +24,13 @@ MAX_PATCH_BYTES = 350_000
 MAX_DIFF_BYTES = 120_000
 MAX_UNTRACKED_DIFF_FILE_BYTES = 40_000
 MAX_RUNNER_RESPONSE_BYTES = 300_000
+MAX_RELEASE_EXECUTOR_RESPONSE_BYTES = 300_000
 MAX_COMMIT_MESSAGE_CHARS = 300
 MAX_RELEASE_REPORT_BYTES = 80_000
 TASK_BRANCH_PATTERN = r"engineer/task-[A-Za-z0-9._-]+"
 WORKSPACE_ID_PATTERN = r"[A-Za-z0-9._-]+"
+APPROVAL_ID_PATTERN = r"[A-Za-z0-9._-]{8,128}"
+SHA1_PATTERN = r"[0-9a-f]{40}"
 METADATA_DIRNAME = "_engineer_meta"
 WORKSPACE_META_VERSION = 1
 
@@ -44,6 +48,25 @@ PROTECTED_PATH_EXACT = {
     "config/allowed_projects.json",
     "apps/engineer_code_mcp/config/allowed_projects.json",
 }
+
+TRUSTED_GIT_ENV = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_ASKPASS": "/bin/false",
+    "GIT_PAGER": "cat",
+    "HUSKY": "0",
+}
+TRUSTED_GIT_ARGS = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "commit.gpgSign=false",
+    "-c",
+    "advice.detachedHead=false",
+    "-c",
+    "protocol.file.allow=never",
+]
 
 
 def _slug(value: str) -> str:
@@ -100,16 +123,30 @@ class AllowedProject:
     default_branch: str
 
 
+@dataclass(frozen=True)
+class TrustedReleaseBaseline:
+    project_id: str
+    repository_id: str
+    remote_name: str
+    remote_path: Path
+    target_branch: str
+
+
 class EngineerCodeService:
     def __init__(
         self,
         projects: dict[str, AllowedProject],
+        trusted_release_bases: dict[str, TrustedReleaseBaseline],
         workspaces_root: Path,
         runner_socket_path: Path,
         runner_auth_token: str,
         runner_timeout_seconds: int,
+        release_executor_socket_path: Path,
+        release_executor_auth_token: str,
+        release_executor_timeout_seconds: int,
     ):
         self.projects = projects
+        self.trusted_release_bases = trusted_release_bases
         self.workspaces_root = workspaces_root.resolve()
         self.workspaces_root.mkdir(parents=True, exist_ok=True)
         self.metadata_root = (self.workspaces_root / METADATA_DIRNAME).resolve()
@@ -117,6 +154,9 @@ class EngineerCodeService:
         self.runner_socket_path = runner_socket_path
         self.runner_auth_token = runner_auth_token
         self.runner_timeout_seconds = runner_timeout_seconds
+        self.release_executor_socket_path = release_executor_socket_path
+        self.release_executor_auth_token = release_executor_auth_token
+        self.release_executor_timeout_seconds = release_executor_timeout_seconds
 
     @classmethod
     def from_env(cls) -> "EngineerCodeService":
@@ -142,13 +182,45 @@ class EngineerCodeService:
         if not runner_auth_token:
             raise ValueError("ENGINEER_RUNNER_AUTH_TOKEN must be set")
         runner_timeout_seconds = int(os.getenv("ENGINEER_RUNNER_TIMEOUT_SECONDS", "90"))
+        release_executor_socket_path = Path(
+            os.getenv(
+                "ENGINEER_RELEASE_EXECUTOR_SOCKET_PATH",
+                "/srv/engineer/release-executor/release-executor.sock",
+            )
+        )
+        release_executor_auth_token = os.getenv("ENGINEER_RELEASE_EXECUTOR_AUTH_TOKEN", "")
+        if not release_executor_auth_token:
+            raise ValueError("ENGINEER_RELEASE_EXECUTOR_AUTH_TOKEN must be set")
+        release_executor_timeout_seconds = int(os.getenv("ENGINEER_RELEASE_EXECUTOR_TIMEOUT_SECONDS", "120"))
         projects = cls._load_projects(projects_file)
+        trusted_policy_file = Path(
+            os.getenv(
+                "ENGINEER_RELEASE_POLICY_FILE",
+                "/srv/engineer/release-policy/trusted_policy.json",
+            )
+        )
+        trusted_remote_host_root = Path(
+            os.getenv("ENGINEER_TRUSTED_REMOTE_HOST_ROOT", "/home/mdv/mainbrain/repos")
+        ).resolve()
+        trusted_remote_container_root = Path(
+            os.getenv("ENGINEER_TRUSTED_REMOTE_CONTAINER_ROOT", "/srv/repos")
+        ).resolve()
+        trusted_release_bases = cls._load_trusted_release_bases(
+            trusted_policy_file=trusted_policy_file,
+            projects=projects,
+            trusted_remote_host_root=trusted_remote_host_root,
+            trusted_remote_container_root=trusted_remote_container_root,
+        )
         return cls(
             projects=projects,
+            trusted_release_bases=trusted_release_bases,
             workspaces_root=workspaces_root,
             runner_socket_path=runner_socket_path,
             runner_auth_token=runner_auth_token,
             runner_timeout_seconds=runner_timeout_seconds,
+            release_executor_socket_path=release_executor_socket_path,
+            release_executor_auth_token=release_executor_auth_token,
+            release_executor_timeout_seconds=release_executor_timeout_seconds,
         )
 
     @staticmethod
@@ -178,6 +250,149 @@ class EngineerCodeService:
                 default_branch=default_branch,
             )
         return projects
+
+    @classmethod
+    def _load_trusted_release_bases(
+        cls,
+        trusted_policy_file: Path,
+        projects: dict[str, AllowedProject],
+        trusted_remote_host_root: Path,
+        trusted_remote_container_root: Path,
+    ) -> dict[str, TrustedReleaseBaseline]:
+        if not trusted_policy_file.exists():
+            raise ValueError(f"trusted release policy file not found: {trusted_policy_file}")
+        if not trusted_policy_file.is_file():
+            raise ValueError(f"trusted release policy path must be a file: {trusted_policy_file}")
+
+        policy = json.loads(trusted_policy_file.read_text(encoding="utf-8"))
+        repositories = policy.get("repositories")
+        if not isinstance(repositories, list) or not repositories:
+            raise ValueError("trusted release policy must include repositories")
+
+        baselines: dict[str, TrustedReleaseBaseline] = {}
+        for entry in repositories:
+            if not isinstance(entry, dict):
+                raise ValueError("trusted release policy repository entry must be an object")
+            repository_id = entry.get("id")
+            project_id = entry.get("managed_project_id")
+            if not isinstance(repository_id, str) or not repository_id:
+                raise ValueError("trusted release policy repository id is required")
+            if not isinstance(project_id, str) or not project_id:
+                raise ValueError(f"trusted release policy managed_project_id is required for {repository_id}")
+            if project_id not in projects:
+                continue
+
+            allowed_remotes = entry.get("allowed_remotes")
+            if not isinstance(allowed_remotes, list) or len(allowed_remotes) != 1:
+                raise ValueError(
+                    f"trusted release policy requires exactly one allowed remote for {repository_id}"
+                )
+            remote_name = allowed_remotes[0]
+            if not isinstance(remote_name, str) or not remote_name:
+                raise ValueError(f"trusted release policy remote name invalid for {repository_id}")
+
+            allowed_target_branches = entry.get("allowed_target_branches")
+            if not isinstance(allowed_target_branches, list) or len(allowed_target_branches) != 1:
+                raise ValueError(
+                    f"trusted release policy requires exactly one target branch for {repository_id}"
+                )
+            target_branch = allowed_target_branches[0]
+            if not isinstance(target_branch, str) or not target_branch:
+                raise ValueError(f"trusted release policy target branch invalid for {repository_id}")
+
+            remote_paths = entry.get("remote_paths")
+            if not isinstance(remote_paths, dict):
+                raise ValueError(f"trusted release policy remote_paths missing for {repository_id}")
+            remote_path_value = remote_paths.get(remote_name)
+            if not isinstance(remote_path_value, str) or not remote_path_value:
+                raise ValueError(
+                    f"trusted release policy remote path missing for {repository_id}:{remote_name}"
+                )
+
+            remote_path = cls._resolve_trusted_remote_path(
+                remote_path_value=remote_path_value,
+                project=projects[project_id],
+                trusted_remote_host_root=trusted_remote_host_root,
+                trusted_remote_container_root=trusted_remote_container_root,
+            )
+
+            if project_id in baselines:
+                raise ValueError(f"duplicate trusted release policy mapping for project {project_id}")
+            baselines[project_id] = TrustedReleaseBaseline(
+                project_id=project_id,
+                repository_id=repository_id,
+                remote_name=remote_name,
+                remote_path=remote_path,
+                target_branch=target_branch,
+            )
+
+        missing_projects = sorted(project_id for project_id in projects if project_id not in baselines)
+        if missing_projects:
+            raise ValueError(
+                f"trusted release policy missing managed project mapping for: {', '.join(missing_projects)}"
+            )
+        return baselines
+
+    @staticmethod
+    def _resolve_trusted_remote_path(
+        remote_path_value: str,
+        project: AllowedProject,
+        trusted_remote_host_root: Path,
+        trusted_remote_container_root: Path,
+    ) -> Path:
+        raw_remote_path = Path(remote_path_value)
+        if not raw_remote_path.is_absolute():
+            raise ValueError("trusted release remote path must be absolute")
+
+        candidate_paths: list[Path] = [raw_remote_path]
+        try:
+            host_relative = raw_remote_path.relative_to(trusted_remote_host_root)
+            candidate_paths.append(trusted_remote_container_root / host_relative)
+        except ValueError:
+            pass
+        candidate_paths.append(project.root.parent / raw_remote_path.name)
+
+        resolved_remote: Path | None = None
+        for candidate in candidate_paths:
+            if candidate.exists():
+                resolved_remote = candidate.resolve()
+                break
+
+        if resolved_remote is None:
+            raise ValueError(
+                f"trusted release remote path is unavailable in this environment: {remote_path_value}"
+            )
+        if not resolved_remote.is_dir():
+            raise ValueError(f"trusted release remote is not a directory: {resolved_remote}")
+        if not (resolved_remote / "HEAD").is_file():
+            raise ValueError(f"trusted release remote is not a bare git repository: {resolved_remote}")
+        try:
+            resolved_remote.relative_to(project.root.parent)
+        except ValueError as exc:
+            raise ValueError(
+                f"trusted release remote escapes approved repository root: {resolved_remote}"
+            ) from exc
+
+        return resolved_remote
+
+    def _release_base(self, project_id: str) -> TrustedReleaseBaseline:
+        release_base = self.trusted_release_bases.get(project_id)
+        if release_base is None:
+            raise ValueError(f"trusted release baseline not configured for project '{project_id}'")
+        return release_base
+
+    def _trusted_release_head(self, release_base: TrustedReleaseBaseline) -> str:
+        ref_name = f"refs/heads/{release_base.target_branch}"
+        head_sha = self._run_git(
+            ["--git-dir", str(release_base.remote_path), "rev-parse", ref_name],
+            cwd=self.workspaces_root,
+            trusted=True,
+        )
+        if not re.fullmatch(SHA1_PATTERN, head_sha):
+            raise ValueError(
+                f"trusted release remote returned invalid HEAD for {release_base.remote_name}/{release_base.target_branch}"
+            )
+        return head_sha
 
     def _project(self, project_id: str) -> AllowedProject:
         project = self.projects.get(project_id)
@@ -284,13 +499,21 @@ class EngineerCodeService:
         allowed_exit_codes: set[int] | None = None,
         strip_output: bool = True,
         env: dict[str, str] | None = None,
+        trusted: bool = False,
+        allow_file_transport: bool = False,
     ) -> str:
         allowed = allowed_exit_codes or {0}
         run_env = os.environ.copy()
+        command = ["git"]
+        if trusted:
+            run_env.update(TRUSTED_GIT_ENV)
+            command.extend(TRUSTED_GIT_ARGS)
+            if allow_file_transport:
+                command.extend(["-c", "protocol.file.allow=always"])
         if env:
             run_env.update(env)
         process = subprocess.run(
-            ["git", *args],
+            [*command, *args],
             cwd=str(cwd),
             check=False,
             capture_output=True,
@@ -686,14 +909,49 @@ class EngineerCodeService:
         if workspace_path.exists():
             raise ValueError("workspace already exists")
 
-        source_branch = base_ref.strip() or project.default_branch
+        release_base = self._release_base(project.project_id)
+        requested_base_ref = base_ref.strip()
+        use_trusted_published_base = requested_base_ref == ""
+        source_ref = requested_base_ref or f"{release_base.remote_name}/{release_base.target_branch}"
         branch = branch_name.strip() or f"engineer/task-{task_slug}"
+        trusted_remote_head_sha = ""
+        try:
+            self._run_git(
+                ["clone", "--no-local", str(project.root), str(workspace_path)],
+                cwd=self.workspaces_root,
+                trusted=True,
+                allow_file_transport=True,
+            )
+            if use_trusted_published_base:
+                trusted_remote_head_sha = self._trusted_release_head(release_base)
+                self._run_git(
+                    [
+                        "fetch",
+                        "--no-tags",
+                        str(release_base.remote_path),
+                        f"refs/heads/{release_base.target_branch}",
+                    ],
+                    cwd=workspace_path,
+                    trusted=True,
+                    allow_file_transport=True,
+                )
+                self._run_git(
+                    ["cat-file", "-e", f"{trusted_remote_head_sha}^{{commit}}"],
+                    cwd=workspace_path,
+                    trusted=True,
+                )
+                source_ref = trusted_remote_head_sha
+            self._run_git(["checkout", source_ref], cwd=workspace_path, trusted=True)
+            self._run_git(["checkout", "-b", branch], cwd=workspace_path, trusted=True)
+        except ValueError:
+            if workspace_path.exists():
+                shutil.rmtree(workspace_path)
+            raise
 
-        self._run_git(["clone", "--no-local", str(project.root), str(workspace_path)], cwd=self.workspaces_root)
-        self._run_git(["checkout", source_branch], cwd=workspace_path)
-        self._run_git(["checkout", "-b", branch], cwd=workspace_path)
+        head_sha = self._run_git(["rev-parse", "HEAD"], cwd=workspace_path, trusted=True)
+        if use_trusted_published_base and head_sha != trusted_remote_head_sha:
+            raise ValueError("workspace HEAD does not match trusted published revision")
 
-        head_sha = self._run_git(["rev-parse", "HEAD"], cwd=workspace_path)
         self._write_workspace_metadata(
             workspace_id,
             {
@@ -701,9 +959,17 @@ class EngineerCodeService:
                 "workspace_type": "development",
                 "project_id": project.project_id,
                 "source_repo_path": str(project.root),
-                "target_branch": source_branch,
+                "target_branch": release_base.target_branch,
                 "target_revision": head_sha,
                 "task_branch": branch,
+                "base_ref": source_ref,
+                "base_commit_sha": head_sha,
+                "base_source": "trusted_published" if use_trusted_published_base else "explicit_ref",
+                "trusted_repository_id": release_base.repository_id,
+                "trusted_release_remote_name": release_base.remote_name,
+                "trusted_release_remote_path": str(release_base.remote_path),
+                "trusted_release_branch": release_base.target_branch,
+                "trusted_release_head_at_create": trusted_remote_head_sha if use_trusted_published_base else "",
                 "created_at": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -711,7 +977,8 @@ class EngineerCodeService:
             "project_id": project.project_id,
             "workspace_id": workspace_id,
             "workspace_path": str(workspace_path),
-            "base_ref": source_branch,
+            "base_ref": source_ref,
+            "base_source": "trusted_published" if use_trusted_published_base else "explicit_ref",
             "branch": branch,
             "head_sha": head_sha,
         }
@@ -893,6 +1160,40 @@ class EngineerCodeService:
         response = json.loads(response_text)
         if not isinstance(response, dict):
             raise ValueError("runner response was not an object")
+        return response
+
+    def _call_release_executor(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not action:
+            raise ValueError("release executor action is required")
+        request_payload = {
+            "auth_token": self.release_executor_auth_token,
+            "action": action,
+            "payload": payload,
+        }
+
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(self.release_executor_timeout_seconds)
+            client.connect(str(self.release_executor_socket_path))
+            client.sendall((json.dumps(request_payload) + "\n").encode("utf-8"))
+
+            buffer = bytearray()
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                if b"\n" in chunk:
+                    break
+                if len(buffer) > MAX_RELEASE_EXECUTOR_RESPONSE_BYTES:
+                    raise ValueError("release executor response exceeded size limit")
+
+        if not buffer:
+            raise ValueError("release executor returned an empty response")
+
+        response_text = bytes(buffer).split(b"\n", 1)[0].decode("utf-8")
+        response = json.loads(response_text)
+        if not isinstance(response, dict):
+            raise ValueError("release executor response was not an object")
         return response
 
     def run_checks(self, workspace_id: str, check_id: str) -> dict[str, Any]:
@@ -1101,26 +1402,44 @@ class EngineerCodeService:
         metadata = self._read_workspace_metadata(workspace_id, required=True)
         if metadata.get("workspace_type") != "development":
             raise ValueError("workspace is not a development workspace")
+        release_base = self._release_base(project_id)
 
         target_branch = str(metadata.get("target_branch", "")).strip()
         target_revision = str(metadata.get("target_revision", "")).strip()
         if not target_branch or not target_revision:
             raise ValueError("workspace metadata is missing target branch/revision")
+        if target_branch != release_base.target_branch:
+            raise ValueError("workspace target branch does not match trusted release policy")
+        if not re.fullmatch(SHA1_PATTERN, target_revision):
+            raise ValueError("workspace target revision is not a valid commit SHA")
 
-        self._run_git(["cat-file", "-e", f"{target_revision}^{{commit}}"], cwd=project.root)
-        target_head_sha = self._run_git(["rev-parse", target_branch], cwd=project.root)
+        self._run_git(["cat-file", "-e", f"{target_revision}^{{commit}}"], cwd=workspace, trusted=True)
+        target_head_sha = self._trusted_release_head(release_base)
         ancestor_check = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", target_revision, target_head_sha],
-            cwd=str(project.root),
+            [
+                "git",
+                *TRUSTED_GIT_ARGS,
+                "--git-dir",
+                str(release_base.remote_path),
+                "merge-base",
+                "--is-ancestor",
+                target_revision,
+                target_head_sha,
+            ],
+            cwd=str(self.workspaces_root),
             check=False,
             capture_output=True,
             text=True,
+            env={**os.environ.copy(), **TRUSTED_GIT_ENV},
         )
         if ancestor_check.returncode not in {0, 1}:
             detail = (ancestor_check.stderr or ancestor_check.stdout or "git merge-base failed").strip()
+            if ancestor_check.returncode == 128 and "Not a valid commit name" in detail:
+                raise ValueError("workspace target revision is not in trusted release history")
             raise ValueError(detail)
         if ancestor_check.returncode == 1:
             raise ValueError("target branch no longer contains recorded target revision")
+        release_history_advanced = target_head_sha != target_revision
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         integration_slug = _slug(workspace_id)
@@ -1131,10 +1450,35 @@ class EngineerCodeService:
             raise ValueError("integration workspace already exists")
 
         integration_branch = f"engineer/integration-{integration_slug}-{timestamp.lower()}"
-        self._run_git(["clone", "--no-local", str(project.root), str(integration_path)], cwd=self.workspaces_root)
-        self._run_git(["checkout", "-B", integration_branch, target_head_sha], cwd=integration_path)
-        self._run_git(["remote", "add", "task-workspace", str(workspace)], cwd=integration_path)
-        self._run_git(["fetch", "--no-tags", "task-workspace", task_branch], cwd=integration_path)
+        self._run_git(
+            ["clone", "--no-local", str(project.root), str(integration_path)],
+            cwd=self.workspaces_root,
+            trusted=True,
+            allow_file_transport=True,
+        )
+        self._run_git(
+            [
+                "fetch",
+                "--no-tags",
+                str(release_base.remote_path),
+                f"refs/heads/{release_base.target_branch}",
+            ],
+            cwd=integration_path,
+            trusted=True,
+            allow_file_transport=True,
+        )
+        self._run_git(
+            ["cat-file", "-e", f"{target_head_sha}^{{commit}}"],
+            cwd=integration_path,
+            trusted=True,
+        )
+        self._run_git(["checkout", "-B", integration_branch, target_head_sha], cwd=integration_path, trusted=True)
+        self._run_git(
+            ["fetch", "--no-tags", str(workspace), task_branch],
+            cwd=integration_path,
+            trusted=True,
+            allow_file_transport=True,
+        )
 
         merge_conflicts: list[str] = []
         merge_error = ""
@@ -1151,19 +1495,26 @@ class EngineerCodeService:
                 ["merge", "--no-ff", "--no-edit", "--no-verify", "FETCH_HEAD"],
                 cwd=integration_path,
                 env=merge_env,
+                trusted=True,
             )
             merged = True
-            merged_commit_sha = self._run_git(["rev-parse", "HEAD"], cwd=integration_path)
+            merged_commit_sha = self._run_git(["rev-parse", "HEAD"], cwd=integration_path, trusted=True)
         except ValueError as exc:
             merge_error = str(exc)
             conflicts_text = self._run_git(
                 ["diff", "--name-only", "--diff-filter=U"],
                 cwd=integration_path,
                 strip_output=False,
+                trusted=True,
             )
             merge_conflicts = sorted({line.strip() for line in conflicts_text.splitlines() if line.strip()})
             try:
-                self._run_git(["merge", "--abort"], cwd=integration_path, allowed_exit_codes={0, 1, 128})
+                self._run_git(
+                    ["merge", "--abort"],
+                    cwd=integration_path,
+                    allowed_exit_codes={0, 1, 128},
+                    trusted=True,
+                )
             except ValueError:
                 pass
 
@@ -1179,6 +1530,11 @@ class EngineerCodeService:
             "task_branch": task_branch,
             "task_commit_sha": task_commit_sha,
             "integration_branch": integration_branch,
+            "trusted_repository_id": release_base.repository_id,
+            "trusted_release_remote_name": release_base.remote_name,
+            "trusted_release_remote_path": str(release_base.remote_path),
+            "trusted_release_branch": release_base.target_branch,
+            "release_history_advanced": release_history_advanced,
             "merged": merged,
             "integration_commit_sha": merged_commit_sha,
             "merge_conflicts": merge_conflicts,
@@ -1195,6 +1551,7 @@ class EngineerCodeService:
             "integration_branch": integration_branch,
             "target_branch": target_branch,
             "target_head_sha": target_head_sha,
+            "release_history_advanced": release_history_advanced,
             "merged": merged,
             "merged_commit_sha": merged_commit_sha,
             "merge_conflicts": merge_conflicts,
@@ -1363,6 +1720,51 @@ class EngineerCodeService:
         self._write_workspace_metadata(integration_workspace_id, metadata)
         return report
 
+    def execute_release(self, integration_workspace_id: str, approval_id: str) -> dict[str, Any]:
+        if not approval_id or not re.fullmatch(APPROVAL_ID_PATTERN, approval_id):
+            raise ValueError("invalid approval_id")
+
+        workspace = self._resolve_workspace(integration_workspace_id)
+        metadata = self._read_workspace_metadata(integration_workspace_id, required=True)
+        if metadata.get("workspace_type") != "integration":
+            raise ValueError("workspace is not an integration workspace")
+        if not metadata.get("merged"):
+            raise ValueError("integration workspace merge did not succeed")
+
+        integration_commit_sha = str(metadata.get("integration_commit_sha", "")).strip()
+        if not integration_commit_sha:
+            raise ValueError("integration metadata missing integration commit")
+
+        current_head = self._run_git(["rev-parse", "HEAD"], cwd=workspace)
+        if current_head != integration_commit_sha:
+            raise ValueError("integration workspace HEAD differs from merged commit")
+
+        response = self._call_release_executor(
+            action="execute_release",
+            payload={
+                "integration_workspace_id": integration_workspace_id,
+                "approval_id": approval_id,
+            },
+        )
+        if response.get("error") and "release_status" not in response:
+            return {
+                "ok": False,
+                "release_status": "PUSH_FAILED",
+                "deployment_status": "NOT_ATTEMPTED",
+                "push_status": "FAILED",
+                "approval_id": approval_id,
+                "integration_workspace_id": integration_workspace_id,
+                "integration_commit_sha": integration_commit_sha,
+                "error": str(response["error"]),
+            }
+        if "ok" not in response:
+            raise ValueError("release executor response missing 'ok' field")
+
+        enriched = dict(response)
+        enriched["integration_workspace_id"] = integration_workspace_id
+        enriched["integration_commit_sha"] = integration_commit_sha
+        return enriched
+
 
 TOOLS = [
     Tool(
@@ -1417,7 +1819,7 @@ TOOLS = [
     ),
     Tool(
         name="create_workspace",
-        description="Create an isolated git clone + branch in managed workspace storage",
+        description="Create an isolated git clone + branch in managed workspace storage; defaults to latest trusted published release branch head",
         inputSchema={
             "type": "object",
             "properties": {
@@ -1510,7 +1912,7 @@ TOOLS = [
     ),
     Tool(
         name="merge_to_integration",
-        description="Merge a committed task workspace branch into an isolated integration workspace",
+        description="Merge a committed task workspace branch into an isolated integration workspace rebased on current trusted release branch head",
         inputSchema={
             "type": "object",
             "properties": {
@@ -1543,6 +1945,18 @@ TOOLS = [
                 "integration_workspace_id": {"type": "string"},
             },
             "required": ["integration_workspace_id"],
+        },
+    ),
+    Tool(
+        name="execute_release",
+        description="Execute an approval-gated sandbox release for an integration workspace (trusted push/deploy/health/rollback + verified host access URLs)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "integration_workspace_id": {"type": "string"},
+                "approval_id": {"type": "string"},
+            },
+            "required": ["integration_workspace_id", "approval_id"],
         },
     ),
 ]
@@ -1687,6 +2101,17 @@ def setup_server(server: Server, service: EngineerCodeService) -> None:
                 return _json_result(
                     service.prepare_release(
                         integration_workspace_id=args.get("integration_workspace_id", ""),
+                    )
+                )
+            if params.name == "execute_release":
+                allowed_keys = {"integration_workspace_id", "approval_id"}
+                unknown = set(args.keys()) - allowed_keys
+                if unknown:
+                    raise ValueError(f"unsupported execute_release fields: {sorted(unknown)}")
+                return _json_result(
+                    service.execute_release(
+                        integration_workspace_id=args.get("integration_workspace_id", ""),
+                        approval_id=args.get("approval_id", ""),
                     )
                 )
             return _json_result({"error": f"unknown tool: {params.name}"}, is_error=True)

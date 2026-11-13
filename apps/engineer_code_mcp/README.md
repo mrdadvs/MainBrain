@@ -16,6 +16,7 @@ This service provides the Engineer agent's initial safe repository tools:
 - `merge_to_integration`
 - `test_merged_code`
 - `prepare_release`
+- `execute_release`
 
 ## Verified Engineer workflow
 
@@ -27,7 +28,8 @@ This service provides the Engineer agent's initial safe repository tools:
 6. Merge into an isolated integration workspace (`merge_to_integration`).
 7. Run post-merge checks on the integration revision (`test_merged_code`).
 8. Generate a `READY FOR APPROVAL` release report (`prepare_release`).
-9. For requested media delivery, render in sandbox (`render_artifact`), then stage a validated artifact for gateway delivery (`resolve_artifact`) and send the returned `MEDIA:` path.
+9. Execute a trusted release request (`execute_release`) using a human-provided approval ID.
+10. For requested media delivery, render in sandbox (`render_artifact`), then stage a validated artifact for gateway delivery (`resolve_artifact`) and send the returned `MEDIA:` path.
 
 ## Security boundaries
 
@@ -37,6 +39,7 @@ This service provides the Engineer agent's initial safe repository tools:
 - Rejects edits to configuration allowlists and MCP/OpenClaw service code paths
 - Rejects symlink traversal/escape
 - `create_workspace` uses isolated clones under managed workspace storage
+- `create_workspace` defaults to the current trusted published release HEAD from release policy (`sandbox-release/main` for `engineer-sandbox`) and records the selected base SHA in workspace metadata
 - `list_files`, `read_file`, and `search_code` require exactly one scope: `project_id` or `workspace_id`
 - `apply_patch` validates the full unified diff before applying
 - `apply_patch` reports whether actual file changes occurred and treats no-op patches as non-successful
@@ -46,8 +49,15 @@ This service provides the Engineer agent's initial safe repository tools:
 - `resolve_artifact` only stages validated files from approved artifact IDs into Engineer's restricted artifact-staging directory and returns a gateway-safe MEDIA path
 - `commit_changes` only operates on managed `engineer/task-*` branches, stages validated workspace paths, and commits with `--no-verify`
 - `merge_to_integration` creates an isolated integration worktree, merges the committed task branch there, and reports conflicts safely
+- `merge_to_integration` rebases integration on the current trusted release branch HEAD, detects baseline advancement vs. workspace creation, and carries the advancement flag for required re-test/re-approval flow
 - `test_merged_code` executes approved checks only against merged integration workspaces
+- `test_merged_code` uses trusted runner commit-locked snapshots for integration commits and records trusted release evidence in the private executor store
 - `prepare_release` requires successful post-merge tests on the exact integration commit and emits a `READY FOR APPROVAL` report without push/deploy
+- `execute_release` only accepts `integration_workspace_id` + `approval_id`
+- `execute_release` returns explicit release statuses (`AUTHORIZATION_REJECTED`, `PUSH_FAILED`, `DEPLOYMENT_SUCCEEDED`, `DEPLOYMENT_FAILED_ROLLED_BACK`, `DEPLOYMENT_FAILED_ROLLBACK_FAILED`)
+- `execute_release` returns deployment statuses (`NOT_ATTEMPTED`, `SUCCEEDED`, `FAILED_ROLLED_BACK`, `FAILED_ROLLBACK_FAILED`)
+- `execute_release` includes trusted `service_access` output with host URL/port and container port (`127.0.0.1:18765` vs `8080`)
+- `execute_release` can push only to trusted policy-approved sandbox remotes/branches through the host release executor
 - No NAS, PostgreSQL, Docker socket, or production secret mounts required
 
 ## Container runtime
@@ -67,3 +77,10 @@ Configured in [docker-compose.yml](/home/mdv/mainbrain/infra/openclaw/docker-com
 - The MCP service does **not** receive Docker socket access.
 - The trusted runner controller owns Docker execution and enforces predefined checks/limits.
 - Artifact staging for delivery is restricted to files under `/home/mdv/mainbrain/data/engineer-artifacts`, copied into `/home/mdv/mainbrain/data/openclaw/workspace/engineer/artifact-staging`, and exposed to the gateway as `/home/node/.openclaw/workspace/engineer/artifact-staging`.
+
+## Release executor socket integration
+
+- Code MCP connects to the trusted release executor via `ENGINEER_RELEASE_EXECUTOR_SOCKET_PATH`.
+- Authentication uses `ENGINEER_RELEASE_EXECUTOR_AUTH_TOKEN`.
+- Only the executor socket directory is mounted into Code MCP.
+- The private approval DB, trusted policy files, and release credentials remain host-side and are not mounted into the Code MCP container.
