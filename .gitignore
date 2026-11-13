@@ -46,6 +46,7 @@ infra/openclaw/.env.local
 infra/openclaw/.env.*.local
 infra/openclaw/.env.videodb_*
 infra/openclaw/discord-config.patch.json5
+apps/video_pipeline/.env.mcp
 
 # Persistent runtime data
 data/
